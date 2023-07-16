@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+{{#title:="meowlos"#}}
+{{#lst := []string{"A","B","C"}#}}
+<h1>{{title}}</h1>
+{{%if title=="meowlos"%}}
+<p>meow~meow~~meow~~~</p>
+{{%else if title!=""%}}
+<p>标题不为空</p>
+{{%else%}}
+<p>标题为空</p>
+{{%end%}}
+<br>
+<table>
+    <thead>
+    <tr>
+        <td>索引</td>
+        <td>字符</td>
+    </tr>
+    </thead>
+    <tbody>
+    {{%for id, el:= range lst%}}
+    <tr>
+        <td>{{strconv.Itoa(id)}}</td>
+        <td>{{el}}</td>
+    </tr>
+    {{%end%}}
+    </tbody>
+</table>
+</body>
+</html>
