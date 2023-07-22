@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -41,8 +42,9 @@ println(builder.String())
 `
 
 type HtmlRender struct {
-	templatePath string
-	scriptPath   string
+	templatePath  string
+	scriptPath    string
+	scriptBuilder strings.Builder
 }
 
 // RenderHtml 解析文件并生成go脚本. htmlPath为html模板文件路径, context为html模板的数据结构体
@@ -51,30 +53,30 @@ func (render HtmlRender) RenderHtml(htmlPath string, context interface{}) error 
 		return os.ErrNotExist
 	}
 
-	var builder strings.Builder
-	defer builder.Reset()
+	//var builder strings.Builder
+	//defer builder.Reset()
 
 	// 脚本开始
-	builder.WriteString(scriptHeader)
+	//builder.WriteString(scriptHeader)
 	// 创建脚本的 internal object
 	// TODO 如何处理要渲染的数据
 	// 模板转go代码
-	err := render.parseHtmlFile(htmlPath, &builder)
+	err := render.ParseHtmlFile(htmlPath)
 	if err != nil {
 		return err
 	}
 	// 脚本结束
-	builder.WriteString(scriptFooter)
+	//builder.WriteString(scriptFooter)
 
 	// 写入文件
-	writer, err := os.Create("./a.go")
-	if err != nil {
-		return err
-	}
-	_, err = writer.WriteString(builder.String())
-	if err != nil {
-		return err
-	}
+	//writer, err := os.Create("./a.go")
+	//if err != nil {
+	//	return err
+	//}
+	//_, err = writer.WriteString(builder.String())
+	//if err != nil {
+	//	return err
+	//}
 	return nil
 }
 
@@ -93,8 +95,8 @@ const exprStart = "%s {\n"
 const exprEnd = "}\n"
 const exprElse = "} %s {\n"
 
-// 解析HTML文件
-func (render HtmlRender) parseHtmlFile(htmlPath string, builder *strings.Builder) error {
+// ParseHtmlFile 解析HTML文件 htmlPath html模板路径
+func (render HtmlRender) ParseHtmlFile(htmlPath string) error {
 	file, err := os.Open(htmlPath)
 	if err != nil {
 		return err
@@ -121,41 +123,41 @@ func (render HtmlRender) parseHtmlFile(htmlPath string, builder *strings.Builder
 		match := re.FindStringIndex(line)
 		if len(match) == 0 {
 			// 普通的字符串
-			builder.WriteString(fmt.Sprintf(writeString, line))
+
+			render.scriptBuilder.WriteString(fmt.Sprintf(writeString, line))
 		} else if len(match) == 2 {
 			_start := line[0:match[0]]       // 开头
 			_expr := line[match[0]:match[1]] // 代码
 			_end := line[match[1]:]          // 结尾
 			if len(_start) > 0 {
-				builder.WriteString(fmt.Sprintf(writeString, _start))
+				render.scriptBuilder.WriteString(fmt.Sprintf(writeString, _start))
 			}
-			// TODO 处理 _expr
 			if strings.HasPrefix(_expr, "{{%") && strings.HasSuffix(_expr, "%}}") {
 				// 控制语句
 				_realExpr := _expr[3 : len(_expr)-3]
 				_realExpr = strings.TrimSpace(_realExpr)
 				if _realExpr == "end" {
-					builder.WriteString(exprEnd)
+					render.scriptBuilder.WriteString(exprEnd)
 				} else if strings.HasPrefix(_realExpr, "else") {
-					builder.WriteString(fmt.Sprintf(exprElse, _realExpr))
+					render.scriptBuilder.WriteString(fmt.Sprintf(exprElse, _realExpr))
 				} else {
-					builder.WriteString(fmt.Sprintf(exprStart, _realExpr))
+					render.scriptBuilder.WriteString(fmt.Sprintf(exprStart, _realExpr))
 				}
 			} else if strings.HasPrefix(_expr, "{{#") && strings.HasSuffix(_expr, "#}}") {
 				// 变量定义
 				_realExpr := _expr[3 : len(_expr)-3]
-				builder.WriteString(fmt.Sprintf(variableDefine, _realExpr))
+				render.scriptBuilder.WriteString(fmt.Sprintf(variableDefine, _realExpr))
 
 			} else if strings.HasPrefix(_expr, "{{") && strings.HasSuffix(_expr, "}}") {
 				// 单纯访问变量
 				_varName := _expr[2 : len(_expr)-2]
-				builder.WriteString(writeVariableStart)
-				builder.WriteString(fmt.Sprintf(writeVariableEnd, _varName))
+				render.scriptBuilder.WriteString(writeVariableStart)
+				render.scriptBuilder.WriteString(fmt.Sprintf(writeVariableEnd, _varName))
 			} else {
 				return &HtmlParseError{msg: "表达式格式错误", line: line}
 			}
 			if len(_end) > 0 {
-				builder.WriteString(fmt.Sprintf(writeString, _end))
+				render.scriptBuilder.WriteString(fmt.Sprintf(writeString, _end))
 			}
 		} else {
 			// 正则匹配出问题了??
@@ -166,6 +168,59 @@ func (render HtmlRender) parseHtmlFile(htmlPath string, builder *strings.Builder
 		return err
 	}
 	return nil
+}
+
+func (render HtmlRender) dumpDataStruct(typeOfT reflect.Type) []string {
+	structDefineList := make([]string, 0)
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("type %s struct {\n", typeOfT.Name()))
+	for i := 0; i < typeOfT.NumField(); i++ {
+		field := typeOfT.Field(i)
+		fieldName := field.Name
+		fieldKind := field.Type.Kind()
+		switch fieldKind {
+		case reflect.Struct:
+			childStruct := render.dumpDataStruct(field.Type)
+			structDefineList = append(structDefineList, childStruct...)
+			builder.WriteString(fmt.Sprintf("\t%s %s\n", fieldName, field.Type.Name()))
+			break
+		case reflect.Map:
+			mapKey := field.Type.Key()
+			mapEl := field.Type.Elem()
+			if mapKey.Kind() == reflect.Struct {
+				childStruct := render.dumpDataStruct(mapKey)
+				structDefineList = append(structDefineList, childStruct...)
+			}
+			if mapEl.Kind() == reflect.Struct {
+				childStruct := render.dumpDataStruct(mapEl)
+				structDefineList = append(structDefineList, childStruct...)
+			}
+			builder.WriteString(fmt.Sprintf("\t%s map[%s]%s\n", fieldName, mapKey.Name(), mapEl.Name()))
+			break
+		case reflect.Slice:
+			el := field.Type.Elem()
+			if el.Kind() == reflect.Struct {
+				elStruct := render.dumpDataStruct(el)
+				structDefineList = append(structDefineList, elStruct...)
+			}
+			builder.WriteString(fmt.Sprintf("\t%s []%s\n", fieldName, el.Name()))
+			break
+		case reflect.Array:
+			arrLen := field.Type.Len()
+			el := field.Type.Elem()
+			if el.Kind() == reflect.Struct {
+				elStruct := render.dumpDataStruct(el)
+				structDefineList = append(structDefineList, elStruct...)
+			}
+			builder.WriteString(fmt.Sprintf("\t%s [%d]%s\n", fieldName, arrLen, el.Name()))
+			break
+		default:
+			builder.WriteString(fmt.Sprintf("\t%s %s\n", fieldName, fieldKind))
+		}
+	}
+	builder.WriteString("}")
+	structDefineList = append(structDefineList, builder.String())
+	return structDefineList
 }
 
 // endregion
