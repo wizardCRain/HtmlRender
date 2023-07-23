@@ -128,7 +128,7 @@ func (render *HtmlRender) ParseHtmlFile(htmlPath string) error {
 					render.scriptBuilder.WriteString(fmt.Sprintf(variableDefine, _realExpr))
 
 				} else if strings.HasPrefix(code, "{{") && strings.HasSuffix(code, "}}") {
-					// 单纯访问变量
+					// 访问变量
 					_varName := code[2 : len(code)-2]
 					render.scriptBuilder.WriteString(writeVariableStart)
 					render.scriptBuilder.WriteString(fmt.Sprintf(writeVariableEnd, _varName))
@@ -182,9 +182,9 @@ func (render *HtmlRender) RenderHtml(context interface{}) (string, error) {
 	htmlName := strings.TrimSuffix(render.templatePath, ".html")
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	filePath := fmt.Sprintf("./%s_%s.go", htmlName, timestamp)
-	//defer func(name string) {
-	//	_ = os.Remove(name)
-	//}(filePath)
+	defer func(name string) {
+		_ = os.Remove(name)
+	}(filePath)
 	writer, err := os.Create(filePath)
 	if err != nil {
 		return "", err
