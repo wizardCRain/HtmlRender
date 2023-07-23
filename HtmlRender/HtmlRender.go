@@ -65,8 +65,8 @@ const exprElse = "} %s {\n"
 
 // ParseHtmlFile 解析html模板文件 htmlPath为html模板文件路径
 func (render *HtmlRender) ParseHtmlFile(htmlPath string) error {
-	if isExists := render.isExists(htmlPath); !isExists {
-		return &HtmlParseError{msg: "文件不存在", line: ""}
+	if isExists, err := render.isExists(htmlPath); !isExists {
+		return &HtmlParseError{msg: err.Error(), line: ""}
 	}
 	render.templatePath = htmlPath
 	file, err := os.Open(htmlPath)
@@ -203,9 +203,9 @@ func (render *HtmlRender) RenderHtml(context interface{}) (string, error) {
 }
 
 // 文件是否存在
-func (render *HtmlRender) isExists(_path string) bool {
+func (render *HtmlRender) isExists(_path string) (bool, error) {
 	_, err := os.Stat(_path)
-	return err == nil
+	return err == nil, err
 }
 
 // reflectMapKV 递归解析map的key/value
