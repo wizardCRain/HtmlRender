@@ -6,7 +6,7 @@ golang 实现的简易html模板渲染
 
 ## 模板语法
 
-详见 template.html  
+详见 [template.html](template.html)  
 简述:
 
 ```
