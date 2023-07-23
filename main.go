@@ -1,85 +1,66 @@
 package main
 
 import (
-	"encoding/json"
+	"HtmlRender/HtmlRender"
 	"fmt"
-	"reflect"
-	"strings"
+	"os"
 )
 
-type Complex struct {
+type School struct {
+	Name string
+	Addr string
 }
 
 type UserInfo struct {
-	id    int8
-	Name  string
-	Email string
-	Info  map[string]string
-}
-
-func (user UserInfo) foo() {
-
-}
-
-func ListFields(a interface{}) {
-	var builder strings.Builder
-	s := reflect.TypeOf(a)
-	println(s.Name())
-	builder.WriteString(fmt.Sprintf("type %s struct {", s.Name()))
-	v := reflect.ValueOf(a)
-	for j := 0; j < v.NumField(); j++ {
-		f := v.Field(j)
-		n := v.Type().Field(j).Name
-		tName := f.Type().Name()
-
-		if f.Type().Kind() == reflect.Struct {
-			fmt.Printf("type %s struct\n", tName)
-		}
-		fmt.Printf("Name: %s  Basic Type or Kind: %s  Direct or Custom Type: %s\n", n, f.Kind(), tName)
-		builder.WriteString(fmt.Sprintf("\t%s %s\n", n, f.Kind()))
-	}
-	builder.WriteString("}")
-	println(builder.String())
+	id     int8
+	Name   string
+	Email  string
+	Info   map[string]string
+	Fake   []string
+	School map[string][]School
+	arrMap map[[2]int32]string
 }
 
 func main() {
-	//render := HtmlRender.HtmlRender{}
-	//err := render.ParseFile("./template.html")
-	//if err != nil {
-	//	fmt.Println(err.Error())
-	//}
-
-	p := UserInfo{Name: "meow", Email: "meow@meow.com", Info: map[string]string{"小学": "XXX", "高中": "asdfaf"}}
-
-	ListFields(p)
-
-	jsonP, err := json.Marshal(p)
+	render := HtmlRender.HtmlRender{}
+	err := render.ParseHtmlFile("./template.html")
 	if err != nil {
-		println(err.Error())
+		fmt.Println(err.Error())
+	}
+	user := UserInfo{
+		id:    1,
+		Name:  "test",
+		Email: "temp@temp.com",
+		Info: map[string]string{
+			"age":  "18",
+			"city": "shanghai",
+			"job":  "coder",
+		},
+		Fake: []string{"1", "2", "3"},
+		School: map[string][]School{
+			"小学": {
+				{"小学1", "小学1地址"},
+				{"小学2", "小学2地址"},
+			},
+			"中学": {
+				{"中学1", "中学1地址"},
+			},
+		},
+	}
+	var output string
+	output, err = render.RenderHtml(user)
+	if err != nil {
+		fmt.Println(err.Error())
 		return
 	}
-	var p2 UserInfo
-	err = json.Unmarshal(jsonP, &p2)
+	file, err := os.Create("./output.html")
 	if err != nil {
-		println(err.Error())
+		fmt.Println(err.Error())
 		return
 	}
-	println(p2.Name)
-	//re, _ := regexp.Compile("{{[\\s|\\S|\\w|\\p{Han}]+}}")
-	////s := "<h1>你好{{title}}世界</h1>"
-	////s := "<h1>{{%if title=\"meowlos\"%}}{{title}}</h1>"
-	//s := "<h1>{{%if title=\"喵洛斯\"%}}</h1>"
-	////s := "</head>"
-	////s := "<h1>{{%if title=\"meowlos\"}</h1>}"
-	//match := re.FindStringIndex(s)
-	//fmt.Println(match)
-	//if len(match) > 1 {
-	//	fmt.Println(s[0:match[0]])
-	//	fmt.Println(s[match[0]:match[1]])
-	//	fmt.Println(s[match[1]:len(s)])
-	//
-	//	_expr := s[match[0]:match[1]]
-	//	_realExpr := _expr[3 : len(_expr)-3]
-	//	fmt.Println(_realExpr)
-	//}
+	_, err = file.WriteString(output)
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
 }

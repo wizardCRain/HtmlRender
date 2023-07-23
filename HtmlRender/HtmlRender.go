@@ -2,12 +2,16 @@ package HtmlRender
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // region 错误定义相关
@@ -28,65 +32,29 @@ func (e *HtmlParseError) Error() string {
 const scriptHeader = `package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
 )
+`
 
-func main(){
+const mainFuncStart = `func main(){
 var builder strings.Builder
 defer builder.Reset()
 `
 
-const scriptFooter = `
+const mainFuncEnd = `
 println(builder.String())
 }
 `
 
 type HtmlRender struct {
 	templatePath  string
-	scriptPath    string
 	scriptBuilder strings.Builder
 }
 
-// RenderHtml 解析文件并生成go脚本. htmlPath为html模板文件路径, context为html模板的数据结构体
-func (render HtmlRender) RenderHtml(htmlPath string, context interface{}) error {
-	if !render.isExists(htmlPath) {
-		return os.ErrNotExist
-	}
-
-	//var builder strings.Builder
-	//defer builder.Reset()
-
-	// 脚本开始
-	//builder.WriteString(scriptHeader)
-	// 创建脚本的 internal object
-	// TODO 如何处理要渲染的数据
-	// 模板转go代码
-	err := render.ParseHtmlFile(htmlPath)
-	if err != nil {
-		return err
-	}
-	// 脚本结束
-	//builder.WriteString(scriptFooter)
-
-	// 写入文件
-	//writer, err := os.Create("./a.go")
-	//if err != nil {
-	//	return err
-	//}
-	//_, err = writer.WriteString(builder.String())
-	//if err != nil {
-	//	return err
-	//}
-	return nil
-}
-
-// 文件是否存在
-func (render HtmlRender) isExists(_path string) bool {
-	_, err := os.Stat(_path)
-	return err == nil
-}
-
-const exprRegex = "{{[\\s|\\S|\\w|\\p{Han}]+}}"
+const exprRegex = "{{.*?}}"
 const writeString = "builder.WriteString(`%s`)\n"
 const writeVariableStart = "builder.WriteString(fmt.Sprintf(\"%s\""
 const writeVariableEnd = ", %s))\n"
@@ -95,8 +63,12 @@ const exprStart = "%s {\n"
 const exprEnd = "}\n"
 const exprElse = "} %s {\n"
 
-// ParseHtmlFile 解析HTML文件 htmlPath html模板路径
-func (render HtmlRender) ParseHtmlFile(htmlPath string) error {
+// ParseHtmlFile 解析html模板文件 htmlPath为html模板文件路径
+func (render *HtmlRender) ParseHtmlFile(htmlPath string) error {
+	if isExists := render.isExists(htmlPath); !isExists {
+		return &HtmlParseError{msg: "文件不存在", line: ""}
+	}
+	render.templatePath = htmlPath
 	file, err := os.Open(htmlPath)
 	if err != nil {
 		return err
@@ -120,44 +92,49 @@ func (render HtmlRender) ParseHtmlFile(htmlPath string) error {
 		 * 切分表达式字符串
 		 * 将非表达式部分直接写入 builder
 		 */
-		match := re.FindStringIndex(line)
-		if len(match) == 0 {
+		matches := re.FindAllStringIndex(line, -1)
+		if len(matches) == 0 {
 			// 普通的字符串
-
 			render.scriptBuilder.WriteString(fmt.Sprintf(writeString, line))
-		} else if len(match) == 2 {
-			_start := line[0:match[0]]       // 开头
-			_expr := line[match[0]:match[1]] // 代码
-			_end := line[match[1]:]          // 结尾
-			if len(_start) > 0 {
-				render.scriptBuilder.WriteString(fmt.Sprintf(writeString, _start))
-			}
-			if strings.HasPrefix(_expr, "{{%") && strings.HasSuffix(_expr, "%}}") {
-				// 控制语句
-				_realExpr := _expr[3 : len(_expr)-3]
-				_realExpr = strings.TrimSpace(_realExpr)
-				if _realExpr == "end" {
-					render.scriptBuilder.WriteString(exprEnd)
-				} else if strings.HasPrefix(_realExpr, "else") {
-					render.scriptBuilder.WriteString(fmt.Sprintf(exprElse, _realExpr))
-				} else {
-					render.scriptBuilder.WriteString(fmt.Sprintf(exprStart, _realExpr))
+		} else if len(matches) > 0 {
+			htmlCodeList := make([]string, 0)
+			htmlCodeList = append(htmlCodeList, line[:matches[0][0]])
+			prevEnd := -1
+			for _, tuple := range matches {
+				start := tuple[0]
+				end := tuple[1]
+				if prevEnd != -1 {
+					htmlCodeList = append(htmlCodeList, line[prevEnd:start])
 				}
-			} else if strings.HasPrefix(_expr, "{{#") && strings.HasSuffix(_expr, "#}}") {
-				// 变量定义
-				_realExpr := _expr[3 : len(_expr)-3]
-				render.scriptBuilder.WriteString(fmt.Sprintf(variableDefine, _realExpr))
-
-			} else if strings.HasPrefix(_expr, "{{") && strings.HasSuffix(_expr, "}}") {
-				// 单纯访问变量
-				_varName := _expr[2 : len(_expr)-2]
-				render.scriptBuilder.WriteString(writeVariableStart)
-				render.scriptBuilder.WriteString(fmt.Sprintf(writeVariableEnd, _varName))
-			} else {
-				return &HtmlParseError{msg: "表达式格式错误", line: line}
+				prevEnd = end
+				htmlCodeList = append(htmlCodeList, line[start:end])
 			}
-			if len(_end) > 0 {
-				render.scriptBuilder.WriteString(fmt.Sprintf(writeString, _end))
+			htmlCodeList = append(htmlCodeList, line[matches[len(matches)-1][1]:])
+			for _, code := range htmlCodeList {
+				if strings.HasPrefix(code, "{{%") && strings.HasSuffix(code, "%}}") {
+					// 控制语句
+					_realExpr := code[3 : len(code)-3]
+					_realExpr = strings.TrimSpace(_realExpr)
+					if _realExpr == "end" {
+						render.scriptBuilder.WriteString(exprEnd)
+					} else if strings.HasPrefix(_realExpr, "else") {
+						render.scriptBuilder.WriteString(fmt.Sprintf(exprElse, _realExpr))
+					} else {
+						render.scriptBuilder.WriteString(fmt.Sprintf(exprStart, _realExpr))
+					}
+				} else if strings.HasPrefix(code, "{{#") && strings.HasSuffix(code, "#}}") {
+					// 变量定义
+					_realExpr := code[3 : len(code)-3]
+					render.scriptBuilder.WriteString(fmt.Sprintf(variableDefine, _realExpr))
+
+				} else if strings.HasPrefix(code, "{{") && strings.HasSuffix(code, "}}") {
+					// 单纯访问变量
+					_varName := code[2 : len(code)-2]
+					render.scriptBuilder.WriteString(writeVariableStart)
+					render.scriptBuilder.WriteString(fmt.Sprintf(writeVariableEnd, _varName))
+				} else {
+					render.scriptBuilder.WriteString(fmt.Sprintf(writeString, code))
+				}
 			}
 		} else {
 			// 正则匹配出问题了??
@@ -170,7 +147,96 @@ func (render HtmlRender) ParseHtmlFile(htmlPath string) error {
 	return nil
 }
 
-func (render HtmlRender) dumpDataStruct(typeOfT reflect.Type) []string {
+// RenderHtml 解析文件并生成go脚本. context为html模板的数据结构体
+func (render *HtmlRender) RenderHtml(context interface{}) (string, error) {
+	var builder strings.Builder
+	defer builder.Reset()
+
+	// 脚本开始
+	builder.WriteString(scriptHeader)
+	// 创建脚本的 internal object
+	contextType := reflect.TypeOf(context)
+	structList := render.reflectDataStruct(contextType)
+	if len(structList) != 0 {
+		builder.WriteString(strings.Join(structList, "\n"))
+	}
+	builder.WriteString("\n")
+	builder.WriteString(mainFuncStart)
+	// context json 互转
+	contextJson, err := json.Marshal(context)
+	if err != nil {
+		return "", err
+	}
+	builder.WriteString(fmt.Sprintf("dataJson := `%s`\n", string(contextJson)))
+	builder.WriteString(fmt.Sprintf("OBJECT := %s{}\n", contextType.Name()))
+	builder.WriteString("err := json.Unmarshal([]byte(dataJson), &OBJECT)\n")
+	builder.WriteString("if err != nil {\n")
+	builder.WriteString("\tpanic(err)\n")
+	builder.WriteString("}\n")
+	// 模板转go代码
+	builder.WriteString(render.scriptBuilder.String())
+	// 脚本结束
+	builder.WriteString(mainFuncEnd)
+
+	// 写入文件
+	htmlName := strings.TrimSuffix(render.templatePath, ".html")
+	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	filePath := fmt.Sprintf("./%s_%s.go", htmlName, timestamp)
+	//defer func(name string) {
+	//	_ = os.Remove(name)
+	//}(filePath)
+	writer, err := os.Create(filePath)
+	if err != nil {
+		return "", err
+	}
+	_, err = writer.WriteString(builder.String())
+	if err != nil {
+		return "", err
+	}
+	err = writer.Close()
+	if err != nil {
+		return "", err
+	}
+	// go run
+	output, err := exec.Command("go", "run", filePath).CombinedOutput()
+	return string(output), err
+}
+
+// 文件是否存在
+func (render *HtmlRender) isExists(_path string) bool {
+	_, err := os.Stat(_path)
+	return err == nil
+}
+
+// reflectMapKV 递归解析map的key/value
+func (render *HtmlRender) reflectMapKV(typeOfT reflect.Type) (string, []string) {
+	switch typeOfT.Kind() {
+	case reflect.Struct:
+		childStruct := render.reflectDataStruct(typeOfT)
+		return typeOfT.Name(), childStruct
+	case reflect.Array:
+		arrLen := typeOfT.Len()
+		el := typeOfT.Elem()
+		if el.Kind() == reflect.Struct {
+			elStruct := render.reflectDataStruct(el)
+			return fmt.Sprintf("[%d]%s", arrLen, el.Name()), elStruct
+		} else {
+			return fmt.Sprintf("[%d]%s", arrLen, el.Kind()), nil
+		}
+	case reflect.Slice:
+		el := typeOfT.Elem()
+		if el.Kind() == reflect.Struct {
+			elStruct := render.reflectDataStruct(el)
+			return fmt.Sprintf("[]%s", el.Name()), elStruct
+		} else {
+			return fmt.Sprintf("[]%s", el.Kind()), nil
+		}
+	}
+	return typeOfT.Kind().String(), nil
+}
+
+// 递归解析数据结构体
+func (render *HtmlRender) reflectDataStruct(typeOfT reflect.Type) []string {
 	structDefineList := make([]string, 0)
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("type %s struct {\n", typeOfT.Name()))
@@ -180,27 +246,28 @@ func (render HtmlRender) dumpDataStruct(typeOfT reflect.Type) []string {
 		fieldKind := field.Type.Kind()
 		switch fieldKind {
 		case reflect.Struct:
-			childStruct := render.dumpDataStruct(field.Type)
+			childStruct := render.reflectDataStruct(field.Type)
 			structDefineList = append(structDefineList, childStruct...)
 			builder.WriteString(fmt.Sprintf("\t%s %s\n", fieldName, field.Type.Name()))
 			break
 		case reflect.Map:
 			mapKey := field.Type.Key()
 			mapEl := field.Type.Elem()
-			if mapKey.Kind() == reflect.Struct {
-				childStruct := render.dumpDataStruct(mapKey)
-				structDefineList = append(structDefineList, childStruct...)
+			// map的key/value可能是struct/array/slice: map[2]int32][2]CustomStruct
+			keyType, keyStruct := render.reflectMapKV(mapKey)
+			if keyStruct != nil && len(keyStruct) > 0 {
+				structDefineList = append(structDefineList, keyStruct...)
 			}
-			if mapEl.Kind() == reflect.Struct {
-				childStruct := render.dumpDataStruct(mapEl)
-				structDefineList = append(structDefineList, childStruct...)
+			elType, elStruct := render.reflectMapKV(mapEl)
+			if elStruct != nil && len(elStruct) > 0 {
+				structDefineList = append(structDefineList, elStruct...)
 			}
-			builder.WriteString(fmt.Sprintf("\t%s map[%s]%s\n", fieldName, mapKey.Name(), mapEl.Name()))
+			builder.WriteString(fmt.Sprintf("\t%s map[%s]%s\n", fieldName, keyType, elType))
 			break
 		case reflect.Slice:
 			el := field.Type.Elem()
 			if el.Kind() == reflect.Struct {
-				elStruct := render.dumpDataStruct(el)
+				elStruct := render.reflectDataStruct(el)
 				structDefineList = append(structDefineList, elStruct...)
 			}
 			builder.WriteString(fmt.Sprintf("\t%s []%s\n", fieldName, el.Name()))
@@ -209,7 +276,7 @@ func (render HtmlRender) dumpDataStruct(typeOfT reflect.Type) []string {
 			arrLen := field.Type.Len()
 			el := field.Type.Elem()
 			if el.Kind() == reflect.Struct {
-				elStruct := render.dumpDataStruct(el)
+				elStruct := render.reflectDataStruct(el)
 				structDefineList = append(structDefineList, elStruct...)
 			}
 			builder.WriteString(fmt.Sprintf("\t%s [%d]%s\n", fieldName, arrLen, el.Name()))
