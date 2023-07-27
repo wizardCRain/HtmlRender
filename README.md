@@ -5,8 +5,6 @@ golang 实现的简易html模板渲染
 模板中可以嵌入 golang 代码
 
 ## 模板语法
-
-详见 [template.html](template.html)  
 简述:
 
 ```
@@ -16,6 +14,49 @@ golang 实现的简易html模板渲染
 {{%else%}}  // else语句
 {{%end%}}  // 结束语句
 {{%for condition%}}  // for语句
+```
+实例:  
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+{{#lst := []string{"A","B","C"}#}}
+<h1>{{OBJECT.Name}}档案</h1>
+{{%if OBJECT.Email!=""%}}<p>电子邮箱: {{OBJECT.Email}}</p>{{%else%}}<p>电子邮箱: 未填写</p>{{%end%}}
+<br>
+<table>
+    <thead>
+    <tr>
+        <td>索引</td>
+        <td>字符</td>
+    </tr>
+    </thead>
+    <tbody>
+    {{%for id, el:= range lst%}}
+    <tr>
+        <td>{{strconv.Itoa(id)}}</td>
+        <td>{{el}}</td>
+    </tr>
+    {{%end%}}
+    </tbody>
+</table>
+{{%for key, val := range OBJECT.Info%}}
+<p> {{key}} : {{val}}</p>
+{{%end%}}
+{{%for key, val := range OBJECT.School%}}
+<p>{{key}}</p>
+<ul>
+    {{%for _, v := range val%}}
+    <li>{{v.Name}} : {{v.Addr}}</li>
+    {{%end%}}
+</ul>
+{{%end%}}
+</body>
+</html>
 ```
 
 ## 用法
