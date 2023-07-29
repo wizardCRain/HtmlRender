@@ -14,6 +14,10 @@ golang 实现的简易html模板渲染
 {{%else%}}  // else语句
 {{%end%}}  // 结束语句
 {{%for condition%}}  // for语句
+
+{{$ golang code $}} // golang 代码
+{{OBJECT.variable}} // 变量使用
+{{# packages #}} // 导入包体, 可以重复出现, 但是开始和结束必须在一行内, 可以使用逗号分割多个库
 ```
 实例:  
 ```html

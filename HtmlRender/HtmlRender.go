@@ -27,6 +27,57 @@ func (e *HtmlParseError) Error() string {
 
 // endregion
 
+// region
+type void struct{}
+type Set struct {
+	version    uint64
+	preVersion uint64
+	values     map[string]void
+	cache      []string
+	freeze     bool
+}
+
+func (s Set) Add(val string) {
+	if _, ok := s.values[val]; ok {
+		return
+	}
+	var empty void
+	s.values[val] = empty
+	if !s.freeze {
+		s.version++
+	}
+}
+
+func (s Set) AddAll(values []string) {
+	s.freeze = true
+	for _, v := range values {
+		s.Add(v)
+	}
+	s.freeze = false
+}
+
+func (s Set) Del(val string) {
+	if _, ok := s.values[val]; !ok {
+		return
+	}
+	delete(s.values, val)
+	s.version++
+}
+
+func (s Set) ToSlice() []string {
+	if s.preVersion == s.version {
+		return s.cache
+	}
+	s.cache = make([]string, 0)
+	for k, _ := range s.values {
+		s.cache = append(s.cache, k)
+	}
+	s.preVersion = s.version
+	return s.cache
+}
+
+// endregion
+
 // region 模板渲染相关
 
 const scriptHeader = `package main
@@ -34,8 +85,8 @@ const scriptHeader = `package main
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
+	%s
 )
 `
 
@@ -50,8 +101,9 @@ println(builder.String())
 `
 
 type HtmlRender struct {
-	templatePath  string
-	scriptBuilder strings.Builder
+	templatePath   string
+	scriptBuilder  strings.Builder
+	importPackages Set
 }
 
 const exprRegex = "{{.*?}}"
@@ -85,8 +137,14 @@ func (render *HtmlRender) ParseHtmlFile(htmlPath string) error {
 	}
 	// html 转 脚本
 	reader := bufio.NewScanner(file)
+	findGolangCode := false
+	resetCodeFlag := false
 	for reader.Scan() {
 		line := reader.Text()
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
 		/*
 		 * 通过正则找到表达式字符串
 		 * 切分表达式字符串
@@ -98,35 +156,36 @@ func (render *HtmlRender) ParseHtmlFile(htmlPath string) error {
 			render.scriptBuilder.WriteString(fmt.Sprintf(writeString, line))
 		} else if len(matches) > 0 {
 			htmlCodeList := make([]string, 0)
-			htmlCodeList = append(htmlCodeList, line[:matches[0][0]])
+			htmlCodeList = append(htmlCodeList, strings.TrimSpace(line[:matches[0][0]]))
 			prevEnd := -1
 			for _, tuple := range matches {
 				start := tuple[0]
 				end := tuple[1]
 				if prevEnd != -1 {
-					htmlCodeList = append(htmlCodeList, line[prevEnd:start])
+					htmlCodeList = append(htmlCodeList, strings.TrimSpace(line[prevEnd:start]))
 				}
 				prevEnd = end
-				htmlCodeList = append(htmlCodeList, line[start:end])
+				htmlCodeList = append(htmlCodeList, strings.TrimSpace(line[start:end]))
 			}
-			htmlCodeList = append(htmlCodeList, line[matches[len(matches)-1][1]:])
-			for _, code := range htmlCodeList {
-				if strings.HasPrefix(code, "{{%") && strings.HasSuffix(code, "%}}") {
-					// 控制语句
-					_realExpr := code[3 : len(code)-3]
-					_realExpr = strings.TrimSpace(_realExpr)
-					if _realExpr == "end" {
-						render.scriptBuilder.WriteString(exprEnd)
-					} else if strings.HasPrefix(_realExpr, "else") {
-						render.scriptBuilder.WriteString(fmt.Sprintf(exprElse, _realExpr))
-					} else {
-						render.scriptBuilder.WriteString(fmt.Sprintf(exprStart, _realExpr))
-					}
-				} else if strings.HasPrefix(code, "{{#") && strings.HasSuffix(code, "#}}") {
-					// 变量定义
-					_realExpr := code[3 : len(code)-3]
-					render.scriptBuilder.WriteString(fmt.Sprintf(variableDefine, _realExpr))
+			htmlCodeList = append(htmlCodeList, strings.TrimSpace(line[matches[len(matches)-1][1]:]))
 
+			for _, code := range htmlCodeList {
+				if !findGolangCode && strings.HasPrefix(code, "{{$") {
+					code = code[3:]
+					findGolangCode = true
+				}
+				if findGolangCode && strings.HasSuffix(code, "$}}") {
+					code = code[:len(code)-3]
+					resetCodeFlag = true
+				}
+				if findGolangCode {
+					// 纯 golang 代码
+					render.scriptBuilder.WriteString(code)
+				} else if strings.HasPrefix(code, "{{#") && strings.HasSuffix(code, "#}}") {
+					// 包体导入
+					importContent := code[3 : len(code)-3]
+					imports := strings.SplitN(importContent, ",", -1)
+					render.importPackages.AddAll(imports)
 				} else if strings.HasPrefix(code, "{{") && strings.HasSuffix(code, "}}") {
 					// 访问变量
 					_varName := code[2 : len(code)-2]
@@ -134,6 +193,10 @@ func (render *HtmlRender) ParseHtmlFile(htmlPath string) error {
 					render.scriptBuilder.WriteString(fmt.Sprintf(writeVariableEnd, _varName))
 				} else {
 					render.scriptBuilder.WriteString(fmt.Sprintf(writeString, code))
+				}
+
+				if resetCodeFlag {
+					findGolangCode = false
 				}
 			}
 		} else {
