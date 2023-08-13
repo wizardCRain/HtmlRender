@@ -37,39 +37,54 @@ type Set struct {
 	freeze     bool
 }
 
-func (s Set) Add(val string) {
+func (s *Set) Init() {
+	s.values = make(map[string]void)
+	s.freeze = false
+}
+
+func (s *Set) Add(val string) {
+	if s.values == nil {
+		s.values = make(map[string]void)
+	}
 	if _, ok := s.values[val]; ok {
 		return
 	}
 	var empty void
 	s.values[val] = empty
 	if !s.freeze {
-		s.version++
+		s.version += 1
 	}
 }
 
-func (s Set) AddAll(values []string) {
+func (s *Set) AddAll(values []string) {
 	s.freeze = true
 	for _, v := range values {
 		s.Add(v)
 	}
+	s.version += 1
 	s.freeze = false
 }
 
-func (s Set) Del(val string) {
+func (s *Set) Del(val string) {
+	if s.values == nil {
+		return
+	}
 	if _, ok := s.values[val]; !ok {
 		return
 	}
 	delete(s.values, val)
-	s.version++
+	s.version += 1
 }
 
-func (s Set) ToSlice() []string {
+func (s *Set) ToSlice() []string {
+	if s.values == nil {
+		return nil
+	}
 	if s.preVersion == s.version {
 		return s.cache
 	}
 	s.cache = make([]string, 0)
-	for k, _ := range s.values {
+	for k := range s.values {
 		s.cache = append(s.cache, k)
 	}
 	s.preVersion = s.version
@@ -103,17 +118,13 @@ println(builder.String())
 type HtmlRender struct {
 	templatePath   string
 	scriptBuilder  strings.Builder
-	importPackages Set
+	importPackages *Set
 }
 
-const exprRegex = "{{.*?}}"
+const exprRegex = "{.*?}"
 const writeString = "builder.WriteString(`%s`)\n"
 const writeVariableStart = "builder.WriteString(fmt.Sprintf(\"%s\""
 const writeVariableEnd = ", %s))\n"
-const variableDefine = "%s\n"
-const exprStart = "%s {\n"
-const exprEnd = "}\n"
-const exprElse = "} %s {\n"
 
 // ParseHtmlFile 解析html模板文件 htmlPath为html模板文件路径
 func (render *HtmlRender) ParseHtmlFile(htmlPath string) error {
@@ -135,6 +146,9 @@ func (render *HtmlRender) ParseHtmlFile(htmlPath string) error {
 	if err != nil {
 		return err
 	}
+	// 初始化相关变量
+	render.scriptBuilder.Reset()
+	render.importPackages = &Set{}
 	// html 转 脚本
 	reader := bufio.NewScanner(file)
 	findGolangCode := false
@@ -170,25 +184,34 @@ func (render *HtmlRender) ParseHtmlFile(htmlPath string) error {
 			htmlCodeList = append(htmlCodeList, strings.TrimSpace(line[matches[len(matches)-1][1]:]))
 
 			for _, code := range htmlCodeList {
-				if !findGolangCode && strings.HasPrefix(code, "{{$") {
-					code = code[3:]
+				if !findGolangCode && strings.HasPrefix(code, "{%") {
+					code = code[2:]
 					findGolangCode = true
 				}
-				if findGolangCode && strings.HasSuffix(code, "$}}") {
-					code = code[:len(code)-3]
+				if findGolangCode && strings.HasSuffix(code, "%}") {
+					code = code[:len(code)-2]
 					resetCodeFlag = true
 				}
 				if findGolangCode {
 					// 纯 golang 代码
-					render.scriptBuilder.WriteString(code)
-				} else if strings.HasPrefix(code, "{{#") && strings.HasSuffix(code, "#}}") {
+					if strings.HasPrefix(code, "if") || strings.HasPrefix(code, "for") {
+						render.scriptBuilder.WriteString(fmt.Sprintf("%s {", code))
+					} else if strings.HasPrefix(code, "else") || strings.HasPrefix(code, "else if") {
+						render.scriptBuilder.WriteString(fmt.Sprintf("} %s {", code))
+					} else if code == "end" {
+						render.scriptBuilder.WriteString("}")
+					} else {
+						render.scriptBuilder.WriteString(code)
+					}
+					render.scriptBuilder.WriteString(" \n")
+				} else if strings.HasPrefix(code, "{i") && strings.HasSuffix(code, "}") {
 					// 包体导入
-					importContent := code[3 : len(code)-3]
+					importContent := code[2 : len(code)-1]
 					imports := strings.SplitN(importContent, ",", -1)
 					render.importPackages.AddAll(imports)
-				} else if strings.HasPrefix(code, "{{") && strings.HasSuffix(code, "}}") {
+				} else if strings.HasPrefix(code, "{=") && strings.HasSuffix(code, "}") {
 					// 访问变量
-					_varName := code[2 : len(code)-2]
+					_varName := code[2 : len(code)-1]
 					render.scriptBuilder.WriteString(writeVariableStart)
 					render.scriptBuilder.WriteString(fmt.Sprintf(writeVariableEnd, _varName))
 				} else {
@@ -216,7 +239,12 @@ func (render *HtmlRender) RenderHtml(context interface{}) (string, error) {
 	defer builder.Reset()
 
 	// 脚本开始
-	builder.WriteString(scriptHeader)
+	var packagesBuilder strings.Builder
+	for _, pack := range render.importPackages.ToSlice() {
+		packagesBuilder.WriteString(fmt.Sprintf("\"%s\"\n", strings.TrimSpace(pack)))
+	}
+	builder.WriteString(fmt.Sprintf(scriptHeader, packagesBuilder.String()))
+	packagesBuilder.Reset()
 	// 创建脚本的 internal object
 	contextType := reflect.TypeOf(context)
 	structList := render.reflectDataStruct(contextType)
@@ -245,6 +273,7 @@ func (render *HtmlRender) RenderHtml(context interface{}) (string, error) {
 	htmlName := strings.TrimSuffix(render.templatePath, ".html")
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	filePath := fmt.Sprintf("./%s_%s.go", htmlName, timestamp)
+	// 删除已执行的脚本
 	defer func(name string) {
 		_ = os.Remove(name)
 	}(filePath)

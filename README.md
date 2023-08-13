@@ -28,9 +28,10 @@ golang 实现的简易html模板渲染
     <title>Title</title>
 </head>
 <body>
-{{#lst := []string{"A","B","C"}#}}
-<h1>{{OBJECT.Name}}档案</h1>
-{{%if OBJECT.Email!=""%}}<p>电子邮箱: {{OBJECT.Email}}</p>{{%else%}}<p>电子邮箱: 未填写</p>{{%end%}}
+{i strconv}
+{%lst := []string{"A","B","C"}%}
+<h1>{=OBJECT.Name}档案</h1>
+{%if OBJECT.Email!=""%}<p>电子邮箱: {=OBJECT.Email}</p>{%else%}<p>电子邮箱: 未填写</p>{%end%}
 <br>
 <table>
     <thead>
@@ -40,25 +41,25 @@ golang 实现的简易html模板渲染
     </tr>
     </thead>
     <tbody>
-    {{%for id, el:= range lst%}}
+    {%for id, el:= range lst%}
     <tr>
-        <td>{{strconv.Itoa(id)}}</td>
-        <td>{{el}}</td>
+        <td>{=strconv.Itoa(id)}</td>
+        <td>{=el}</td>
     </tr>
-    {{%end%}}
+    {%end%}
     </tbody>
 </table>
-{{%for key, val := range OBJECT.Info%}}
-<p> {{key}} : {{val}}</p>
-{{%end%}}
-{{%for key, val := range OBJECT.School%}}
-<p>{{key}}</p>
+{%for key, val := range OBJECT.Info%}
+<p> {=key} : {=val}</p>
+{%end%}
+{%for key, val := range OBJECT.School%}
+<p>{=key}</p>
 <ul>
-    {{%for _, v := range val%}}
-    <li>{{v.Name}} : {{v.Addr}}</li>
-    {{%end%}}
+    {%for _, v := range val%}
+    <li>{=v.Name} : {=v.Addr}</li>
+    {%end%}
 </ul>
-{{%end%}}
+{%end%}
 </body>
 </html>
 ```
@@ -69,8 +70,8 @@ golang 实现的简易html模板渲染
 package main
 
 import (
-	"HtmlRender/HtmlRender"
 	"fmt"
+	"github.com/wizardCRain/HtmlRender/HtmlRender"
 	"os"
 )
 
@@ -118,6 +119,7 @@ func main() {
 	var output string
 	output, err = render.RenderHtml(user)
 	if err != nil {
+		fmt.Println(output)
 		fmt.Println(err.Error())
 		return
 	}
@@ -132,5 +134,4 @@ func main() {
 		return
 	}
 }
-
 ```
